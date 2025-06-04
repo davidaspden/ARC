@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <title>Add Remove Change</title>
+  <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+  <link href="/style/style.css" rel="stylesheet" />
+</head>
+
+<body>
+  <div id="titleSection">
+    <h1>Add Remove Change Visualiser</h1>
+    <input type="text" id="myInput" placeholder="Starting Word.." title="Type in a word">
+    <button id="myBtn">Get Options</button>
+  </div>
+  <div id="main">
+    <div id="mynetwork"></div>
+    <div id="history">
+      <h2>History</h2>
+      <ul id="historyList"></ul>
+    </div>
+    <div id="footer">
+      <p>Created by Dave</p>
+    </div>
+    <script type="module">
+      import {
+        alphabet,
+        words,
+        letterPrimeMap,
+        isPrime,
+        buildData,
+        scoreWord,
+        factorWord,
+        uniqueFactors,
+        multiplyLetters,
+        makeIndex
+      } from './utils.js';
+
+      // Initialize alphabet and letterPrimeMap
+      for (let i = 65; i <= 90; i++) {
+        alphabet.push(String.fromCharCode(i));
+      }
+
+      const primes = [];
+      for (let i = 2; primes.length < 26; i++) {
+        if (isPrime(i)) {
+          primes.push(i);
+        }
+      }
+
+      for (let i = 0; i < alphabet.length; i++) {
+        letterPrimeMap[alphabet[i]] = primes[i];
+      }
+
+      let index = {};
+      let intervalId = null; // Variable to hold the interval ID
+
+      fetch('words_dictionary.json')
+      .then(response => {
+          if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+          }
+
+          const contentLength = response.headers.get('Content-Length');
+          const totalSize = contentLength ? parseInt(contentLength, 10) : null;
+          let loadedSize = 0;
+
+          if (!response.body) {
+            throw new Error('Response body is null');
+          }
+          console.log("Starting download...");
+          if (totalSize) {
+            console.log(`Total size: ${totalSize} bytes`);
+          } else {
+            console.log("Total size unknown (Content-Length header missing).");
+          }
+
+
+          const reader = response.body.getReader();
+          const chunks = []; // Array to store received chunks
+
+          // Function to recursively read the stream
+          function read() {
+            return reader.read().then(({ done, value }) => {
+              if (done) {
+                console.log('Download complete.');
+                // Combine chunks into a single Uint8Array
+                const dataArray = new Uint8Array(loadedSize);
+                let position = 0;
+                for (const chunk of chunks) {
+                  dataArray.set(chunk, position);
+                  position += chunk.length;
+                }
+                // Decode the Uint8Array to a string and parse JSON
+                const jsonData = new TextDecoder("utf-8").decode(dataArray);
+                return JSON.parse(jsonData); // Return parsed data for the next .then()
+              }
+
+              chunks.push(value);
+              loadedSize += value.length;
+
+              if (totalSize) {
+                const percentage = Math.round((loadedSize / totalSize) * 100);
+                console.log(`Downloaded: ${loadedSize} / ${totalSize} bytes (${percentage}%)`);
+                document.documentElement.style.setProperty('--loaded', `${percentage}%`);
+              } else {
+                console.log(`Downloaded: ${loadedSize} bytes`);
+              }
+              
+
+              // Read the next chunk
+              return read();
+            });
+          }
+          // Start reading the stream
+          return read();
+        })
+        .then(data => {
+          buildData(data);
+          index = makeIndex(words);
+        })
+        .catch(error => {
+          console.error('Error fetching the JSON file:', error);
+        });
+
+      document.addEventListener("DOMContentLoaded", function () {
+        const myBtn = document.getElementById("myBtn");
+        const myInput = document.getElementById("myInput");
+        const historyList = document.getElementById("historyList");
+        const history = [];
+        const maxHistory = 10;
+        myInput.focus();
+        myInput.addEventListener("keydown", function (event) {
+          if (event.key === "Enter") {
+            myBtn.click();
+          }
+        });
+        myBtn.addEventListener("click", function () {
+          const inputValue = myInput.value;
+          console.log(inputValue);
+          if (inputValue.trim() === "") {
+            return;
+          }
+          historyList.innerHTML = ""; // Clear the history list
+          history.unshift(inputValue); // Add the new input to the beginning of the history array
+          if (history.length > maxHistory) {
+            history.pop(); // Remove the oldest input if we exceed the max history
+          }
+          history.forEach((item) => {
+            const li = document.createElement("li");
+            li.textContent = item;
+            historyList.appendChild(li);
+          });
+
+          // Clear any existing interval
+          if (intervalId) {
+            clearInterval(intervalId);
+            intervalId = null;
+          }
+
+          let score = scoreWord(inputValue);
+          let factors = factorWord(inputValue);
+          let addLetters = multiplyLetters(inputValue);
+
+          let id = 1;
+          var nodes = new vis.DataSet([
+            { id: 1, label: inputValue }
+          ]);
+
+          var edges = new vis.DataSet([
+            { from: 1, to: 1 },
+          ]);
+
+          addLetters.forEach((element) => {
+            if (index[element]) {
+              let wordsfound = index[element];
+              wordsfound.forEach((word) => {
+                nodes.add({ id: ++id, label: word, color: "red" });
+                edges.add({ from: 1, to: id, color: "red" });
+              });
+            }
+          });
+
+          uniqueFactors(factors).forEach((element) => {
+            var scoreTemp = score / element;
+            if (index[scoreTemp]) {
+              let wordsfound = index[scoreTemp];
+              wordsfound.forEach((word) => {
+                nodes.add({ id: ++id, label: word });
+                edges.add({ from: 1, to: id });
+              });
+            }
+          });
+
+          uniqueFactors(factors).forEach((element) => {
+            //remove a letter
+            var scoreTemp = score / element;
+            //multiply by a prime and see if it is in the list
+            primes.forEach((prime) => {
+              if (index[scoreTemp * prime]) {
+                let wordsfound = index[scoreTemp * prime];
+                wordsfound.forEach((word) => {
+                  if (word != myInput.value) {
+
+                    nodes.add({ id: ++id, label: word, color: "orange" });
+                    edges.add({ from: 1, to: id, color: "orange" });
+                  }
+                });
+              }
+            })
+          });
+
+          var container = document.getElementById("mynetwork");
+          var data = {
+            nodes: nodes,
+            edges: edges,
+          };
+          var options = {
+            physics: false,
+            interaction: { dragNodes: false }
+          };
+          var network = new vis.Network(container, data, options);
+
+          // Store initial positions after network is drawn
+          const initialPositions = network.getPositions();
+          const initialXPositions = {};
+          for (const nodeId in initialPositions) {
+            initialXPositions[nodeId] = initialPositions[nodeId].x;
+          }
+
+          network.on("release", function (params) {
+            if (params.nodes.length > 0) {
+              let nodeId = params.nodes[0];
+              let nodeLabel = nodes.get(nodeId).label;
+              console.log("Clicked node ID: " + nodeId);
+              console.log("Clicked node label: " + nodeLabel);
+              myInput.value = nodeLabel;
+              myInput.dispatchEvent(new Event('input', { bubbles: true }));
+              myBtn.click();
+            }
+          });
+
+          let startTime = Date.now();
+
+          // Start the interval and store its ID
+          intervalId = setInterval(() => {
+            const elapsed = Date.now() - startTime;
+            const frequency = 0.02;  // How fast the sway oscillates
+            const amplitude = 2;     // How far it sways (increased for visibility)
+
+            nodes.forEach((node) => {
+              // Check if initial position exists for the node
+              if (initialXPositions[node.id] !== undefined) {
+                let swayX = Math.sin(elapsed * frequency + node.id) * amplitude;
+                // Use the stored initial X position
+                nodes.update({ id: node.id, x: initialXPositions[node.id] + swayX });
+              }
+            });
+          }, 50); // Update more frequently for smoother animation
+        });
+      });
+    </script>
+</body>
+</html>
